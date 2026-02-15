@@ -1,9 +1,0 @@
-{
-  "dependencies": {
-    "lucide-react": "^0.564.0"
-  },
-  "devDependencies": {
-    "eslint": "^10.0.0",
-    "eslint-plugin-tailwindcss": "^3.18.2"
-  }
-}
