@@ -36,7 +36,7 @@ load_dotenv(dotenv_path=env_path)
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 SMALLEST_AI_API_KEY = os.getenv("SMALLEST_AI_API_KEY", "")
-VOICE_LLM_MODEL = "openai/gpt-4o-mini"  # openai/gpt-oss-20b:free
+VOICE_LLM_MODEL = "openai/gpt-oss-20b:free"  # openai/gpt-4o-mini
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
