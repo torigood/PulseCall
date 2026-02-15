@@ -15,7 +15,7 @@ if not API_KEY:
     raise ValueError("Neither OPENROUTER_API_KEY nor ANTHROPIC_API_KEY is set in .env file.")
 
 # OpenRouter model string for Claude 3.5 Haiku
-MODEL = "meta-llama/llama-3.3-70b-instruct:free"
+MODEL = "google/gemini-2.0-flash-exp:free"
 BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 def respond(user_message: str, history: list, system_prompt: str) -> str:
