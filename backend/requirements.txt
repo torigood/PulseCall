@@ -1,0 +1,12 @@
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+anthropic>=0.25.0
+httpx>=0.27.0
+pydantic>=2.7.0
+pydantic-settings>=2.2.0
+python-dotenv>=1.0.0
+python-multipart>=0.0.9
+sqlalchemy>=2.0.0
+aiosqlite>=0.20.0
+apscheduler>=3.10.0
+twilio>=9.0.0
