@@ -132,17 +132,20 @@ export const endCall = (patientId: string, conversationId: string) =>
   });
 
 // Calls
-function normalizeCall(c: any): CallRecord {
-  return { ...c, call_id: c.call_id || c.id };
+// Backend may return `id` instead of `call_id` — normalize before exposing to UI.
+type RawCallRecord = Omit<CallRecord, "call_id"> & { call_id?: string };
+
+function normalizeCall(c: RawCallRecord): CallRecord {
+  return { ...c, call_id: c.call_id ?? c.id ?? "" };
 }
 
 export const listCalls = async () => {
-  const raw = await request<any[]>("/calls");
+  const raw = await request<RawCallRecord[]>("/calls");
   return raw.map(normalizeCall);
 };
 
 export const getCall = async (id: string) => {
-  const raw = await request<any>(`/calls/${id}`);
+  const raw = await request<RawCallRecord>(`/calls/${id}`);
   return normalizeCall(raw);
 };
 

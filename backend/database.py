@@ -22,7 +22,9 @@ from models import CallState, PatientStatus, SeverityGrade
 DB_PATH = os.getenv("PULSECALL_DB_PATH", "pulsecall.db")
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DB_PATH}")
 
-engine = create_engine(DATABASE_URL, echo=False, connect_args={"check_same_thread": False})
+# check_same_thread is SQLite-only — omit for PostgreSQL
+_connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+engine = create_engine(DATABASE_URL, echo=False, connect_args=_connect_args)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 

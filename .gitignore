@@ -3,6 +3,7 @@ node_modules/
 venv/
 __pycache__/
 *.pyc
+*.pyo
 
 # env / secrets
 .env
@@ -12,6 +13,8 @@ backend/serviceAccountKey.json
 
 # database (auto-generated with seed data)
 backend/pulsecall.db
+*.db
+*.sqlite
 
 # next.js
 .next/
@@ -26,9 +29,22 @@ next-env.d.ts
 
 # OS
 .DS_Store
+Thumbs.db
 
 # misc
 *.pem
 npm-debug.log*
 yarn-debug.log*
 .vercel
+
+# Python test / coverage
+.pytest_cache/
+.coverage
+coverage/
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Docker
+.docker/
