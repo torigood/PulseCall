@@ -33,7 +33,7 @@ describe("Sidebar", () => {
     render(<Sidebar />);
 
     expect(screen.getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "New Campaign" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "New Patient" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Escalations" })).toBeInTheDocument();
   });
 

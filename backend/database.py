@@ -1,4 +1,4 @@
-"""SQLite database for call history and retry tracking via SQLAlchemy."""
+"""Database models and session management via SQLAlchemy."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     Enum,
+    ForeignKey,
     Integer,
     String,
     Text,
@@ -16,10 +17,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-from models import CallState
+from models import CallState, PatientStatus, SeverityGrade
 
 DB_PATH = os.getenv("PULSECALL_DB_PATH", "pulsecall.db")
-DATABASE_URL = f"sqlite:///{DB_PATH}"
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DB_PATH}")
 
 engine = create_engine(DATABASE_URL, echo=False, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -29,28 +30,73 @@ class Base(DeclarativeBase):
     pass
 
 
-class UserRecord(Base):
-    __tablename__ = "users"
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class Patient(Base):
+    """Core patient record — replaces both the old UserRecord and in-memory campaign store."""
+
+    __tablename__ = "patients"
 
     id = Column(String, primary_key=True)
     name = Column(String, nullable=False)
     phone = Column(String, nullable=False)
     email = Column(String, nullable=True)
-    campaign_id = Column(String, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    age = Column(Integer, nullable=True)
+    gender = Column(String, nullable=True)
+    primary_diagnosis = Column(String, nullable=True)
+    surgical_history = Column(Text, nullable=True)      # JSON list
+    medications = Column(Text, nullable=True)            # JSON list
+    allergies = Column(Text, nullable=True)              # JSON list
+    vital_signs = Column(Text, nullable=True)            # JSON dict
+    post_op_instructions = Column(Text, nullable=True)   # JSON list
+    emergency_contact = Column(Text, nullable=True)      # JSON dict
+    previous_calls_context = Column(Text, nullable=True) # JSON list (historical context for LLM)
+    next_appointment = Column(String, nullable=True)
+
+    severity_grade = Column(
+        Enum(SeverityGrade), nullable=True, default=None
+    )
+    status = Column(
+        Enum(PatientStatus), nullable=False, default=PatientStatus.PENDING_REVIEW
+    )
+
+    # AI agent configuration (per-patient)
+    agent_persona = Column(String, nullable=True)
+    conversation_goal = Column(Text, nullable=True)
+    system_prompt = Column(Text, nullable=True)
+    escalation_keywords = Column(Text, nullable=True)    # JSON list
+    voice_id = Column(String, default="rachel")
+
+    doctor_id = Column(String, nullable=True)  # FK added in Phase 1-C
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class ConversationRecord(Base):
+    """Persistent conversation storage — replaces the in-memory conversations dict."""
+
+    __tablename__ = "conversations"
+
+    id = Column(String, primary_key=True)
+    patient_id = Column(String, ForeignKey("patients.id"), nullable=False, index=True)
+    status = Column(String, nullable=False, default="active")  # active / inactive
+    history = Column(Text, nullable=True)  # JSON list of {role, content}
+    started_at = Column(DateTime, nullable=True)
+    ended_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
 
 
 class CallRecord(Base):
+    """Record of each AI phone call to a patient."""
+
     __tablename__ = "call_history"
 
     id = Column(String, primary_key=True)
-    user_id = Column(String, nullable=False, index=True)
-    campaign_id = Column(String, nullable=True)
-    state = Column(
-        Enum(CallState),
-        nullable=False,
-        default=CallState.PENDING,
-    )
+    patient_id = Column(String, ForeignKey("patients.id"), nullable=False, index=True)
+    conversation_id = Column(String, ForeignKey("conversations.id"), nullable=True)
+    state = Column(Enum(CallState), nullable=False, default=CallState.PENDING)
     retry_count = Column(Integer, default=0)
     max_retries = Column(Integer, default=3)
     triage_classification = Column(String, nullable=True)
@@ -58,15 +104,31 @@ class CallRecord(Base):
     transcript_text = Column(Text, nullable=True)
     summary = Column(Text, nullable=True)
     sentiment_score = Column(Integer, nullable=True)
-    detected_flags = Column(Text, nullable=True)  # JSON-encoded list
+    detected_flags = Column(Text, nullable=True)         # JSON list
     recommended_action = Column(Text, nullable=True)
     escalation_reason = Column(Text, nullable=True)
     smallest_call_id = Column(String, nullable=True)
     started_at = Column(DateTime, nullable=True)
     ended_at = Column(DateTime, nullable=True)
     next_retry_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class EscalationRecord(Base):
+    """Escalation alerts requiring doctor attention."""
+
+    __tablename__ = "escalations"
+
+    id = Column(String, primary_key=True)
+    call_id = Column(String, ForeignKey("call_history.id"), nullable=True)
+    patient_id = Column(String, ForeignKey("patients.id"), nullable=False, index=True)
+    priority = Column(String, nullable=False, default="medium")  # high / medium / low
+    status = Column(String, nullable=False, default="open")      # open / acknowledged
+    reason = Column(Text, nullable=True)
+    detected_flags = Column(Text, nullable=True)  # JSON list
+    created_at = Column(DateTime, default=_utcnow)
+    acknowledged_at = Column(DateTime, nullable=True)
 
 
 def init_db() -> None:

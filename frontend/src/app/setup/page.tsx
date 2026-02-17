@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createCampaign } from "@/lib/api";
+import { createPatient } from "@/lib/api";
 
 export default function SetupPage() {
   const router = useRouter();
@@ -10,15 +10,16 @@ export default function SetupPage() {
   const [error, setError] = useState("");
 
   const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [age, setAge] = useState("");
+  const [gender, setGender] = useState("");
+  const [primaryDiagnosis, setPrimaryDiagnosis] = useState("");
   const [agentPersona, setAgentPersona] = useState("");
   const [conversationGoal, setConversationGoal] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [escalationKeywords, setEscalationKeywords] = useState("");
-  const [patientContext, setPatientContext] = useState("");
   const [voiceId, setVoiceId] = useState("rachel");
-  const [recipientName, setRecipientName] = useState("");
-  const [recipientPhone, setRecipientPhone] = useState("");
-  const [recipientEmail, setRecipientEmail] = useState("");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -26,28 +27,25 @@ export default function SetupPage() {
     setSubmitting(true);
 
     try {
-      const campaign = await createCampaign({
+      const patient = await createPatient({
         name,
-        agent_persona: agentPersona,
-        conversation_goal: conversationGoal,
-        system_prompt: systemPrompt,
+        phone,
+        email: email || undefined,
+        age: age ? parseInt(age, 10) : undefined,
+        gender: gender || undefined,
+        primary_diagnosis: primaryDiagnosis || undefined,
+        agent_persona: agentPersona || undefined,
+        conversation_goal: conversationGoal || undefined,
+        system_prompt: systemPrompt || undefined,
         escalation_keywords: escalationKeywords
           .split(",")
           .map((k) => k.trim())
           .filter(Boolean),
-        recipients: [
-          {
-            name: recipientName,
-            phone: recipientPhone || undefined,
-            email: recipientEmail || undefined,
-          },
-        ],
-        patient_context: patientContext || undefined,
         voice_id: voiceId,
       });
-      router.push(`/simulate/${campaign.id}`);
+      router.push(`/simulate/${patient.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create campaign");
+      setError(err instanceof Error ? err.message : "Failed to register patient");
     } finally {
       setSubmitting(false);
     }
@@ -55,128 +53,135 @@ export default function SetupPage() {
 
   return (
     <div className="mx-auto max-w-2xl px-6 py-8">
-      <h1 className="text-2xl font-bold text-white">Create Campaign</h1>
+      <h1 className="text-2xl font-bold text-white">Register Patient</h1>
       <p className="mt-1 mb-8 text-sm text-zinc-400">
-        Configure your AI agent, define the conversation goal, and set
-        escalation triggers.
+        Add a new patient for post-discharge AI follow-up calls.
       </p>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Campaign Name */}
-        <Field label="Campaign Name" required>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Post-Discharge Follow-Up"
-            required
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-          />
-        </Field>
-
-        {/* Agent Persona */}
-        <Field label="Agent Persona" required>
-          <input
-            type="text"
-            value={agentPersona}
-            onChange={(e) => setAgentPersona(e.target.value)}
-            placeholder="e.g. Claire, a warm post-discharge nurse"
-            required
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-          />
-        </Field>
-
-        {/* Conversation Goal */}
-        <Field label="Conversation Goal" required>
-          <textarea
-            value={conversationGoal}
-            onChange={(e) => setConversationGoal(e.target.value)}
-            placeholder="e.g. Check pain levels, medication adherence, and flag any concerning symptoms"
-            required
-            rows={2}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-          />
-        </Field>
-
-        {/* System Prompt */}
-        <Field label="System Prompt" required>
-          <textarea
-            value={systemPrompt}
-            onChange={(e) => setSystemPrompt(e.target.value)}
-            placeholder="You are Claire, a warm post-discharge nurse. Your tone is empathetic and concise. Keep responses under 3 sentences..."
-            required
-            rows={5}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-          />
-        </Field>
-
-        {/* Patient Context */}
-        <Field label="Patient Context" hint="Injected into AI prompt">
-          <textarea
-            value={patientContext}
-            onChange={(e) => setPatientContext(e.target.value)}
-            placeholder={"Patient: Michael Thompson, 58M\nSurgery: Total Knee Replacement, Jan 28 2026\nMedications: Acetaminophen 500mg, Celecoxib 200mg\nAllergies: Penicillin\nPrevious calls: Pain 7/10 → 5/10 (improving)"}
-            rows={5}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-          />
-        </Field>
-
-        {/* Voice & Escalation */}
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="TTS Voice">
-            <select
-              value={voiceId}
-              onChange={(e) => setVoiceId(e.target.value)}
-              className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-            >
-              <option value="rachel">Rachel</option>
-              <option value="emily">Emily</option>
-              <option value="matt">Matt</option>
-            </select>
-          </Field>
-          <Field label="Escalation Keywords" hint="Comma-separated">
-            <input
-              type="text"
-              value={escalationKeywords}
-              onChange={(e) => setEscalationKeywords(e.target.value)}
-              placeholder="e.g. chest pain, bleeding"
-              className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-            />
-          </Field>
-        </div>
-
-        {/* Recipient */}
+        {/* Patient Info */}
         <fieldset className="rounded-lg border border-zinc-800 p-4">
           <legend className="px-2 text-sm font-medium text-zinc-300">
-            Recipient
+            Patient Information
           </legend>
           <div className="space-y-4">
-            <Field label="Name" required>
+            <Field label="Full Name" required>
               <input
                 type="text"
-                value={recipientName}
-                onChange={(e) => setRecipientName(e.target.value)}
-                placeholder="e.g. Alex Johnson"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Michael Thompson"
                 required
                 className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
               />
             </Field>
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Phone">
+              <Field label="Phone" required>
                 <input
                   type="text"
-                  value={recipientPhone}
-                  onChange={(e) => setRecipientPhone(e.target.value)}
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
                   placeholder="+1-555-0100"
+                  required
                   className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
                 />
               </Field>
               <Field label="Email">
                 <input
                   type="email"
-                  value={recipientEmail}
-                  onChange={(e) => setRecipientEmail(e.target.value)}
-                  placeholder="alex@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="patient@example.com"
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                />
+              </Field>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <Field label="Age">
+                <input
+                  type="number"
+                  value={age}
+                  onChange={(e) => setAge(e.target.value)}
+                  placeholder="58"
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                />
+              </Field>
+              <Field label="Gender">
+                <select
+                  value={gender}
+                  onChange={(e) => setGender(e.target.value)}
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                >
+                  <option value="">Select</option>
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                  <option value="Other">Other</option>
+                </select>
+              </Field>
+              <Field label="Primary Diagnosis">
+                <input
+                  type="text"
+                  value={primaryDiagnosis}
+                  onChange={(e) => setPrimaryDiagnosis(e.target.value)}
+                  placeholder="e.g. Knee OA"
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                />
+              </Field>
+            </div>
+          </div>
+        </fieldset>
+
+        {/* AI Agent Configuration */}
+        <fieldset className="rounded-lg border border-zinc-800 p-4">
+          <legend className="px-2 text-sm font-medium text-zinc-300">
+            AI Agent Configuration
+          </legend>
+          <div className="space-y-4">
+            <Field label="Agent Persona">
+              <input
+                type="text"
+                value={agentPersona}
+                onChange={(e) => setAgentPersona(e.target.value)}
+                placeholder="e.g. PulseCall Medical Assistant"
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+              />
+            </Field>
+            <Field label="Conversation Goal">
+              <textarea
+                value={conversationGoal}
+                onChange={(e) => setConversationGoal(e.target.value)}
+                placeholder="e.g. Check pain levels, medication adherence, and flag any concerning symptoms"
+                rows={2}
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+              />
+            </Field>
+            <Field label="System Prompt">
+              <textarea
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                placeholder="Be concise, empathetic, and clear. Ask one question at a time."
+                rows={3}
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+              />
+            </Field>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="TTS Voice">
+                <select
+                  value={voiceId}
+                  onChange={(e) => setVoiceId(e.target.value)}
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                >
+                  <option value="rachel">Rachel</option>
+                  <option value="emily">Emily</option>
+                  <option value="matt">Matt</option>
+                </select>
+              </Field>
+              <Field label="Escalation Keywords" hint="Comma-separated">
+                <input
+                  type="text"
+                  value={escalationKeywords}
+                  onChange={(e) => setEscalationKeywords(e.target.value)}
+                  placeholder="e.g. chest pain, bleeding"
                   className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
                 />
               </Field>
@@ -195,7 +200,7 @@ export default function SetupPage() {
           disabled={submitting}
           className="w-full rounded-lg bg-emerald-600 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
         >
-          {submitting ? "Creating..." : "Create Campaign & Start Simulation"}
+          {submitting ? "Registering..." : "Register Patient & Start Simulation"}
         </button>
       </form>
     </div>

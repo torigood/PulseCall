@@ -59,11 +59,12 @@ def test_voice_chat_initial_success(app_ctx, api_request, monkeypatch):
 
     patch_async_client(app_ctx, monkeypatch, queued)
 
-    campaign_id = next(iter(app_ctx.store["campaigns"]))
+    # Use a seeded patient ID
+    patient_id = "pt_demo_001"
     response = api_request(
         "POST",
         "/voice/chat",
-        json={"campaign_id": campaign_id, "trigger": "initial", "history": []},
+        json={"patient_id": patient_id, "trigger": "initial", "history": []},
     )
 
     assert response.status_code == 200
@@ -77,11 +78,11 @@ def test_voice_chat_requires_transcription_when_not_initial(app_ctx, api_request
     app_ctx.OPENROUTER_API_KEY = "openrouter-test"
     app_ctx.SMALLEST_AI_API_KEY = "smallest-test"
 
-    campaign_id = next(iter(app_ctx.store["campaigns"]))
+    patient_id = "pt_demo_001"
     response = api_request(
         "POST",
         "/voice/chat",
-        json={"campaign_id": campaign_id, "history": []},
+        json={"patient_id": patient_id, "history": []},
     )
     assert response.status_code == 400
 

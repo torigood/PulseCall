@@ -1,4 +1,4 @@
-"""Pydantic models for Smallest.ai webhook payloads and internal state."""
+"""Pydantic models for webhook payloads, enums, and internal state."""
 
 from __future__ import annotations
 
@@ -17,6 +17,26 @@ class CallState(str, Enum):
     SILENT_RETRY = "SILENT_RETRY"
     ESCALATED = "ESCALATED"
     COMPLETED = "COMPLETED"
+
+
+# ---------------------------------------------------------------------------
+# Patient status lifecycle
+# ---------------------------------------------------------------------------
+class PatientStatus(str, Enum):
+    PENDING_REVIEW = "PENDING_REVIEW"
+    CONFIRMED = "CONFIRMED"
+    ACTIVE = "ACTIVE"
+    COMPLETED = "COMPLETED"
+
+
+# ---------------------------------------------------------------------------
+# Severity grade for post-discharge triage
+# ---------------------------------------------------------------------------
+class SeverityGrade(str, Enum):
+    CRITICAL = "CRITICAL"
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
 
 
 # ---------------------------------------------------------------------------
@@ -106,9 +126,8 @@ class TriageResult(BaseModel):
 # Outbound call request (sent to Smallest.ai)
 # ---------------------------------------------------------------------------
 class OutboundCallRequest(BaseModel):
-    user_id: str
-    user_name: str
+    patient_id: str
+    patient_name: str
     phone_number: str
-    campaign_id: Optional[str] = None
     system_prompt: str = ""
     voice_id: str = "emily"

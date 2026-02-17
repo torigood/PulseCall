@@ -11,7 +11,7 @@ import {
 
 const links = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/setup", label: "New Campaign", icon: Plus },
+  { href: "/setup", label: "New Patient", icon: Plus },
   { href: "/escalations", label: "Escalations", icon: AlertTriangle },
 ];
 

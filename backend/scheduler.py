@@ -2,24 +2,21 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 from uuid import uuid4
 
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 
-from database import CallRecord, SessionLocal, UserRecord, init_db
+from database import CallRecord, Patient, SessionLocal, init_db
 from models import CallState, OutboundCallRequest
 
-# Set .env file path based on current file location
 env_path = Path(__file__).parent / ".env"
-
 load_dotenv(dotenv_path=env_path)
 
 logger = logging.getLogger(__name__)
@@ -50,7 +47,7 @@ async def place_outbound_call(request: OutboundCallRequest) -> Optional[str]:
     Returns the Smallest.ai call_id on success, or None on failure.
     """
     if not SMALLEST_API_KEY:
-        logger.warning("[MOCK CALL] Would call %s for user %s", request.phone_number, request.user_name)
+        logger.warning("[MOCK CALL] Would call %s for patient %s", request.phone_number, request.patient_name)
         return f"mock_call_{uuid4().hex[:8]}"
 
     payload = {
@@ -60,9 +57,9 @@ async def place_outbound_call(request: OutboundCallRequest) -> Optional[str]:
         "webhook_url": f"{WEBHOOK_BASE_URL}/webhooks/smallest/post-call",
         "analytics_webhook_url": f"{WEBHOOK_BASE_URL}/webhooks/smallest/analytics",
         "metadata": {
-            "user_id": request.user_id,
-            "user_name": request.user_name,
-            "campaign_id": request.campaign_id or "",
+            "user_id": request.patient_id,
+            "user_name": request.patient_name,
+            "patient_id": request.patient_id,
         },
     }
 
@@ -79,13 +76,13 @@ async def place_outbound_call(request: OutboundCallRequest) -> Optional[str]:
             resp.raise_for_status()
             data = resp.json()
             call_id = data.get("call_id", data.get("id"))
-            logger.info("Outbound call placed: smallest_call_id=%s user=%s", call_id, request.user_id)
+            logger.info("Outbound call placed: smallest_call_id=%s patient=%s", call_id, request.patient_id)
             return call_id
         except httpx.HTTPStatusError as e:
             logger.error("Smallest.ai API error %s: %s", e.response.status_code, e.response.text)
             return None
         except Exception:
-            logger.exception("Failed to place outbound call for user %s", request.user_id)
+            logger.exception("Failed to place outbound call for patient %s", request.patient_id)
             return None
 
 
@@ -93,19 +90,21 @@ async def place_outbound_call(request: OutboundCallRequest) -> Optional[str]:
 # Scheduled job: process pending calls
 # ---------------------------------------------------------------------------
 async def process_pending_calls() -> None:
-    """Check for users due for a call and place outbound calls."""
+    """Check for patients due for a call and place outbound calls."""
     db = SessionLocal()
     try:
         now = datetime.now(timezone.utc)
 
-        # Find users who need a call: either no call record, or retry is due
-        users = db.query(UserRecord).all()
+        # Only call patients with CONFIRMED or ACTIVE status
+        from models import PatientStatus
+        patients = db.query(Patient).filter(
+            Patient.status.in_([PatientStatus.CONFIRMED, PatientStatus.ACTIVE])
+        ).all()
 
-        for user in users:
-            # Get the latest call record for this user
+        for patient in patients:
             latest_call = (
                 db.query(CallRecord)
-                .filter(CallRecord.user_id == user.id)
+                .filter(CallRecord.patient_id == patient.id)
                 .order_by(CallRecord.created_at.desc())
                 .first()
             )
@@ -113,37 +112,30 @@ async def process_pending_calls() -> None:
             should_call = False
 
             if latest_call is None:
-                # Never called before
                 should_call = True
             elif latest_call.state == CallState.COMPLETED:
-                # Completed — check if enough time has passed for next check-in
                 if latest_call.ended_at:
                     next_due = latest_call.ended_at + timedelta(hours=CHECK_INTERVAL_HOURS)
                     should_call = now >= next_due
             elif latest_call.state in (CallState.BUSY_RETRY, CallState.SILENT_RETRY):
-                # Retry scheduled — check if retry time has arrived
                 if latest_call.next_retry_at and now >= latest_call.next_retry_at:
                     if latest_call.retry_count < latest_call.max_retries:
                         should_call = True
                     else:
-                        # Max retries exceeded — escalate
                         latest_call.state = CallState.ESCALATED
                         latest_call.escalation_reason = f"Max retries ({latest_call.max_retries}) exceeded"
                         db.commit()
-                        logger.warning("User %s exceeded max retries — escalated", user.id)
+                        logger.warning("Patient %s exceeded max retries — escalated", patient.id)
             elif latest_call.state in (CallState.ESCALATED, CallState.PENDING):
-                # Already escalated or pending — skip
                 pass
 
             if not should_call:
                 continue
 
-            # Create a new call record
             call_id = f"call_{uuid4().hex[:10]}"
             call_record = CallRecord(
                 id=call_id,
-                user_id=user.id,
-                campaign_id=user.campaign_id,
+                patient_id=patient.id,
                 state=CallState.PENDING,
                 retry_count=0 if latest_call is None else latest_call.retry_count,
                 max_retries=MAX_RETRIES,
@@ -153,12 +145,10 @@ async def process_pending_calls() -> None:
             db.add(call_record)
             db.commit()
 
-            # Place the call
             request = OutboundCallRequest(
-                user_id=user.id,
-                user_name=user.name,
-                phone_number=user.phone,
-                campaign_id=user.campaign_id,
+                patient_id=patient.id,
+                patient_name=patient.name,
+                phone_number=patient.phone,
                 system_prompt=DEFAULT_SYSTEM_PROMPT,
             )
             smallest_call_id = await place_outbound_call(request)
@@ -166,12 +156,12 @@ async def process_pending_calls() -> None:
             if smallest_call_id:
                 call_record.smallest_call_id = smallest_call_id
                 db.commit()
-                logger.info("Call queued: id=%s user=%s smallest_id=%s", call_id, user.id, smallest_call_id)
+                logger.info("Call queued: id=%s patient=%s smallest_id=%s", call_id, patient.id, smallest_call_id)
             else:
                 call_record.state = CallState.BUSY_RETRY
                 call_record.next_retry_at = now + timedelta(minutes=5)
                 db.commit()
-                logger.warning("Call placement failed for user %s — will retry", user.id)
+                logger.warning("Call placement failed for patient %s — will retry", patient.id)
 
     except Exception:
         logger.exception("Error in process_pending_calls")
@@ -212,7 +202,7 @@ def start_scheduler() -> None:
         hours=CHECK_INTERVAL_HOURS,
         id="pulsecall_checkin",
         replace_existing=True,
-        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=10),  # first run shortly after startup
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=10),
     )
     scheduler.start()
     logger.info("Scheduler started — check-in interval: %.1f hours", CHECK_INTERVAL_HOURS)

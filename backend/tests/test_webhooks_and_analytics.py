@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 from database import CallRecord
-from models import AudioMetrics, CallState, EmotionDetection, SmallestAIPostCallPayload, TranscriptSegment, TriageClassification, TriageResult
+from models import CallState, TriageClassification, TriageResult
 
 
-def _create_db_call(app_ctx, user_id: str, smallest_call_id: str, campaign_id: str = "cmp_demo_001"):
-    db = app_ctx.SessionLocal()
+def _create_patient(api_request, name="Pat", phone="+1-555-4444"):
+    return api_request(
+        "POST",
+        "/patients",
+        json={"name": name, "phone": phone},
+    ).json()
+
+
+def _create_db_call(app_ctx, patient_id: str, smallest_call_id: str):
+    db = app_ctx.get_db()
     try:
         rec = CallRecord(
             id="call_db_001",
-            user_id=user_id,
-            campaign_id=campaign_id,
+            patient_id=patient_id,
             state=CallState.PENDING,
             smallest_call_id=smallest_call_id,
         )
@@ -21,16 +28,15 @@ def _create_db_call(app_ctx, user_id: str, smallest_call_id: str, campaign_id: s
 
 
 def test_post_call_busy_schedules_retry(app_ctx, api_request):
-    user = api_request("POST", "/users", json={"name": "Pat", "phone": "+1-555-4444", "campaign_id": "cmp_demo_001"}).json()
-    _create_db_call(app_ctx, user["id"], "smallest_busy_001")
+    patient = _create_patient(api_request)
+    _create_db_call(app_ctx, patient["id"], "smallest_busy_001")
 
     response = api_request(
         "POST",
         "/webhooks/smallest/post-call",
         json={
             "call_id": "smallest_busy_001",
-            "user_id": user["id"],
-            "campaign_id": "cmp_demo_001",
+            "user_id": patient["id"],
             "status": "busy",
             "audio_metrics": {
                 "avg_db": 0,
@@ -50,8 +56,8 @@ def test_post_call_busy_schedules_retry(app_ctx, api_request):
 
 
 def test_post_call_immediate_escalation_sends_sms(app_ctx, api_request, monkeypatch):
-    user = api_request("POST", "/users", json={"name": "Sam", "phone": "+1-555-5555", "campaign_id": "cmp_demo_001"}).json()
-    _create_db_call(app_ctx, user["id"], "smallest_esc_001")
+    patient = _create_patient(api_request, name="Sam", phone="+1-555-5555")
+    _create_db_call(app_ctx, patient["id"], "smallest_esc_001")
 
     sent = {"count": 0}
 
@@ -61,7 +67,6 @@ def test_post_call_immediate_escalation_sends_sms(app_ctx, api_request, monkeypa
 
     monkeypatch.setattr(app_ctx, "send_escalation_sms", fake_send_sms)
 
-    # Force deterministic escalate path
     monkeypatch.setattr(
         app_ctx,
         "analyze_vitals",
@@ -78,8 +83,7 @@ def test_post_call_immediate_escalation_sends_sms(app_ctx, api_request, monkeypa
         "/webhooks/smallest/post-call",
         json={
             "call_id": "smallest_esc_001",
-            "user_id": user["id"],
-            "campaign_id": "cmp_demo_001",
+            "user_id": patient["id"],
             "status": "completed",
             "audio_metrics": {
                 "avg_db": -60,
@@ -98,12 +102,15 @@ def test_post_call_immediate_escalation_sends_sms(app_ctx, api_request, monkeypa
     body = response.json()
     assert body["status"] == "escalated"
     assert sent["count"] == 1
-    assert len(app_ctx.store["escalations"]) >= 1
+
+    # Verify escalation was created in DB
+    esc_list = api_request("GET", "/escalations").json()
+    assert len(esc_list) >= 1
 
 
 def test_post_call_analyze_transcript_creates_escalation_on_flags(app_ctx, api_request, monkeypatch):
-    user = api_request("POST", "/users", json={"name": "Rin", "phone": "+1-555-6666", "campaign_id": "cmp_demo_001"}).json()
-    _create_db_call(app_ctx, user["id"], "smallest_speech_001")
+    patient = _create_patient(api_request, name="Rin", phone="+1-555-6666")
+    _create_db_call(app_ctx, patient["id"], "smallest_speech_001")
 
     monkeypatch.setattr(
         app_ctx,
@@ -132,8 +139,7 @@ def test_post_call_analyze_transcript_creates_escalation_on_flags(app_ctx, api_r
         "/webhooks/smallest/post-call",
         json={
             "call_id": "smallest_speech_001",
-            "user_id": user["id"],
-            "campaign_id": "cmp_demo_001",
+            "user_id": patient["id"],
             "status": "completed",
             "audio_metrics": {
                 "avg_db": -20,
@@ -152,17 +158,19 @@ def test_post_call_analyze_transcript_creates_escalation_on_flags(app_ctx, api_r
 
     assert response.status_code == 200
     assert response.json()["status"] == "completed"
-    assert len(app_ctx.store["escalations"]) >= 1
+
+    # Verify escalation was created
+    esc_list = api_request("GET", "/escalations").json()
+    assert len(esc_list) >= 1
 
 
 def test_analytics_webhook_ignored_for_completed_call(app_ctx, api_request):
-    user = api_request("POST", "/users", json={"name": "Lee", "phone": "+1-555-7777", "campaign_id": "cmp_demo_001"}).json()
-    db = app_ctx.SessionLocal()
+    patient = _create_patient(api_request, name="Lee", phone="+1-555-7777")
+    db = app_ctx.get_db()
     try:
         rec = CallRecord(
             id="call_done_001",
-            user_id=user["id"],
-            campaign_id="cmp_demo_001",
+            patient_id=patient["id"],
             state=CallState.COMPLETED,
             smallest_call_id="smallest_done_001",
         )
@@ -176,7 +184,7 @@ def test_analytics_webhook_ignored_for_completed_call(app_ctx, api_request):
         "/webhooks/smallest/analytics",
         json={
             "call_id": "smallest_done_001",
-            "user_id": user["id"],
+            "user_id": patient["id"],
             "audio_metrics": {
                 "avg_db": -24,
                 "peak_db": -10,

@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "PulseCall",
-  description: "Proactive AI voice agent platform",
+  description: "AI-powered post-discharge patient management system",
 };
 
 export default function RootLayout({

@@ -1,8 +1,8 @@
 import {
-  createCampaign,
+  createPatient,
   getCall,
   listCalls,
-  listCampaigns,
+  listPatients,
 } from "./api";
 
 describe("api client", () => {
@@ -10,42 +10,42 @@ describe("api client", () => {
     jest.resetAllMocks();
   });
 
-  it("lists campaigns with a GET request", async () => {
+  it("lists patients with a GET request", async () => {
     const fetchMock = jest.fn().mockResolvedValue({
       ok: true,
-      json: async () => [{ id: "cmp_1", name: "Campaign A" }],
+      json: async () => [{ id: "pt_1", name: "Patient A" }],
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    const data = await listCampaigns();
+    const data = await listPatients();
 
     expect(data).toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/campaigns",
+      "http://localhost:8000/patients",
       expect.objectContaining({
         headers: { "Content-Type": "application/json" },
       }),
     );
   });
 
-  it("creates a campaign with POST body", async () => {
+  it("creates a patient with POST body", async () => {
     const fetchMock = jest.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ id: "cmp_2" }),
+      json: async () => ({ id: "pt_2" }),
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await createCampaign({
-      name: "Post-op",
+    await createPatient({
+      name: "Post-op Patient",
+      phone: "+1-555-0100",
       agent_persona: "Nurse",
       conversation_goal: "Check in",
       system_prompt: "Be concise",
       escalation_keywords: ["chest pain"],
-      recipients: [{ name: "Alex" }],
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/campaigns/create",
+      "http://localhost:8000/patients",
       expect.objectContaining({
         method: "POST",
       }),
@@ -80,7 +80,6 @@ describe("api client", () => {
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await expect(listCampaigns()).rejects.toThrow("Invalid payload");
+    await expect(listPatients()).rejects.toThrow("Invalid payload");
   });
 });
-

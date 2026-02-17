@@ -41,13 +41,9 @@ def app_ctx(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
     main = importlib.import_module("main")
 
-    # Reset in-memory state for test isolation.
-    for bucket in main.store.values():
-        bucket.clear()
-    main.seed_example_data()
-
-    # Ensure SQLite tables exist when lifespan is disabled in tests.
+    # Initialize DB tables and seed example data.
     main.init_db()
+    main.seed_example_data()
 
     return main
 

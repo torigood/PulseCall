@@ -2,8 +2,8 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { getCampaign } from "@/lib/api";
-import type { Campaign } from "@/lib/api";
+import { getPatient } from "@/lib/api";
+import type { Patient } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -57,10 +57,10 @@ const SILENCE_THRESHOLD = 0.01;
 const SILENCE_DURATION = 1000;
 
 export default function SimulateVoicePage() {
-  const { campaignId } = useParams<{ campaignId: string }>();
+  const { patientId } = useParams<{ patientId: string }>();
   const router = useRouter();
 
-  const [campaign, setCampaign] = useState<Campaign | null>(null);
+  const [patient, setPatient] = useState<Patient | null>(null);
   const [patientData, setPatientData] = useState<PatientData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -89,22 +89,22 @@ export default function SimulateVoicePage() {
   const ringOscillatorsRef = useRef<OscillatorNode[]>([]);
   const startRecordingLoopRef = useRef<() => Promise<void>>(async () => {});
 
-  // Load campaign data
+  // Load patient data
   useEffect(() => {
-    if (!campaignId) return;
-    getCampaign(campaignId)
-      .then((c) => {
-        setCampaign(c);
-        if ((c as any).patient_data) {
-          setPatientData((c as any).patient_data as PatientData);
+    if (!patientId) return;
+    getPatient(patientId)
+      .then((p) => {
+        setPatient(p);
+        if (p.patient_data) {
+          setPatientData(p.patient_data as unknown as PatientData);
         }
         setLoading(false);
       })
       .catch(() => {
-        setError("Campaign not found");
+        setError("Patient not found");
         setLoading(false);
       });
-  }, [campaignId]);
+  }, [patientId]);
 
   useEffect(() => {
     callStateRef.current = callState;
@@ -275,7 +275,7 @@ export default function SimulateVoicePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          campaign_id: campaignId,
+          patient_id: patientId,
           transcription: text,
           history: currentHistory,
         }),
@@ -307,7 +307,7 @@ export default function SimulateVoicePage() {
       console.error("Pipeline error:", err);
       if (callStateRef.current === "connected") startRecordingLoopRef.current();
     }
-  }, [playAudioAndContinue, campaignId]);
+  }, [playAudioAndContinue, patientId]);
 
   // --- Auto-recording loop ---
   const startRecordingLoop = useCallback(async () => {
@@ -372,7 +372,7 @@ export default function SimulateVoicePage() {
       const res = await fetch(`${API_URL}/voice/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ campaign_id: campaignId, trigger: "initial", history: [] }),
+        body: JSON.stringify({ patient_id: patientId, trigger: "initial", history: [] }),
       });
 
       const data = await res.json();
@@ -402,7 +402,7 @@ export default function SimulateVoicePage() {
       console.error("Error answering call:", err);
       setStatus("idle");
     }
-  }, [playAudioAndContinue, startRecordingLoop, startRinging, stopRinging, campaignId]);
+  }, [playAudioAndContinue, startRecordingLoop, startRinging, stopRinging, patientId]);
 
   // --- Fetch call summary ---
   const fetchCallSummary = useCallback(async (history: ChatMessage[]) => {
@@ -465,10 +465,10 @@ export default function SimulateVoicePage() {
     );
   }
 
-  if (error || !campaign) {
+  if (error || !patient) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-[#050505] text-white gap-4">
-        <p className="text-red-400">{error || "Campaign not found"}</p>
+        <p className="text-red-400">{error || "Patient not found"}</p>
         <button onClick={() => router.push("/")} className="text-zinc-400 hover:text-white text-sm">
           Back to Dashboard
         </button>
@@ -561,7 +561,7 @@ export default function SimulateVoicePage() {
                 )}
                 <div className="rounded-2xl bg-zinc-900/50 border border-white/5 p-4 flex flex-col gap-1">
                   <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Goal</span>
-                  <span className="text-sm text-zinc-300 font-medium">{campaign.conversation_goal}</span>
+                  <span className="text-sm text-zinc-300 font-medium">{patient.conversation_goal}</span>
                 </div>
               </div>
 
@@ -591,9 +591,9 @@ export default function SimulateVoicePage() {
           ) : (
             /* Simplified view when no patient_data */
             <div className="rounded-3xl bg-gradient-to-b from-zinc-900/50 to-zinc-900 border border-white/10 p-6 flex flex-col gap-4 backdrop-blur-xl shadow-2xl">
-              <h2 className="text-xl font-bold text-white">{campaign.name}</h2>
-              <p className="text-zinc-400 text-sm">{campaign.agent_persona}</p>
-              <p className="text-zinc-500 text-sm">{campaign.conversation_goal}</p>
+              <h2 className="text-xl font-bold text-white">{patient.name}</h2>
+              <p className="text-zinc-400 text-sm">{patient.agent_persona}</p>
+              <p className="text-zinc-500 text-sm">{patient.conversation_goal}</p>
             </div>
           )}
 

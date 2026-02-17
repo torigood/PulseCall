@@ -31,7 +31,7 @@ def make_shower_noise_payload() -> SmallestAIPostCallPayload:
     return SmallestAIPostCallPayload(
         call_id="test_shower_001",
         user_id="usr_test_001",
-        campaign_id="cmp_demo_001",
+        campaign_id=None,
         status="completed",
         audio_metrics=AudioMetrics(
             avg_db=-15.0,
@@ -50,7 +50,7 @@ def make_silent_emergency_payload() -> SmallestAIPostCallPayload:
     return SmallestAIPostCallPayload(
         call_id="test_silence_001",
         user_id="usr_test_001",
-        campaign_id="cmp_demo_001",
+        campaign_id=None,
         status="completed",
         audio_metrics=AudioMetrics(
             avg_db=-65.0,
@@ -69,7 +69,7 @@ def make_sleeping_payload() -> SmallestAIPostCallPayload:
     return SmallestAIPostCallPayload(
         call_id="test_sleeping_001",
         user_id="usr_test_001",
-        campaign_id="cmp_demo_001",
+        campaign_id=None,
         status="completed",
         audio_metrics=AudioMetrics(
             avg_db=-42.0,
@@ -88,7 +88,7 @@ def make_normal_speech_payload() -> SmallestAIPostCallPayload:
     return SmallestAIPostCallPayload(
         call_id="test_speech_001",
         user_id="usr_test_001",
-        campaign_id="cmp_demo_001",
+        campaign_id=None,
         status="completed",
         audio_metrics=AudioMetrics(
             avg_db=-25.0,
@@ -121,7 +121,7 @@ def make_distress_keyword_payload() -> SmallestAIPostCallPayload:
     return SmallestAIPostCallPayload(
         call_id="test_distress_kw_001",
         user_id="usr_test_001",
-        campaign_id="cmp_demo_001",
+        campaign_id=None,
         status="completed",
         audio_metrics=AudioMetrics(
             avg_db=-22.0,
@@ -154,7 +154,7 @@ def make_fear_emotion_payload() -> SmallestAIPostCallPayload:
     return SmallestAIPostCallPayload(
         call_id="test_fear_001",
         user_id="usr_test_001",
-        campaign_id="cmp_demo_001",
+        campaign_id=None,
         status="completed",
         audio_metrics=AudioMetrics(
             avg_db=-30.0,
@@ -181,7 +181,7 @@ def make_busy_payload() -> SmallestAIPostCallPayload:
     return SmallestAIPostCallPayload(
         call_id="test_busy_001",
         user_id="usr_test_001",
-        campaign_id="cmp_demo_001",
+        campaign_id=None,
         status="busy",
         audio_metrics=AudioMetrics(
             avg_db=0.0,

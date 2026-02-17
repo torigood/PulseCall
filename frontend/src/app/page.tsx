@@ -2,21 +2,21 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { listCampaigns, listCalls, listEscalations } from "@/lib/api";
-import type { Campaign, CallRecord, Escalation } from "@/lib/api";
-import { Phone, AlertTriangle, TrendingUp, Plus } from "lucide-react";
+import { listPatients, listCalls, listEscalations } from "@/lib/api";
+import type { Patient, CallRecord, Escalation } from "@/lib/api";
+import { Phone, AlertTriangle, TrendingUp, Plus, Users } from "lucide-react";
 import { SentimentBadge } from "@/components/SentimentBadge";
 
 export default function Dashboard() {
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [patients, setPatients] = useState<Patient[]>([]);
   const [calls, setCalls] = useState<CallRecord[]>([]);
   const [escalations, setEscalations] = useState<Escalation[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([listCampaigns(), listCalls(), listEscalations()])
-      .then(([c, cl, e]) => {
-        setCampaigns(c);
+    Promise.all([listPatients(), listCalls(), listEscalations()])
+      .then(([p, cl, e]) => {
+        setPatients(p);
         setCalls(cl);
         setEscalations(e);
       })
@@ -44,7 +44,7 @@ export default function Dashboard() {
         <div>
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>
           <p className="mt-1 text-sm text-zinc-400">
-            Overview of campaigns, calls, and escalations
+            Overview of patients, calls, and escalations
           </p>
         </div>
         <Link
@@ -52,16 +52,16 @@ export default function Dashboard() {
           className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500"
         >
           <Plus className="h-4 w-4" />
-          New Campaign
+          New Patient
         </Link>
       </div>
 
       {/* Stats */}
       <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-4">
         <StatCard
-          label="Campaigns"
-          value={campaigns.length}
-          icon={<TrendingUp className="h-5 w-5 text-emerald-400" />}
+          label="Patients"
+          value={patients.length}
+          icon={<Users className="h-5 w-5 text-emerald-400" />}
         />
         <StatCard
           label="Total Calls"
@@ -80,38 +80,41 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* Campaigns */}
+      {/* Patients */}
       <section className="mb-8">
-        <h2 className="mb-4 text-lg font-semibold text-white">Campaigns</h2>
-        {campaigns.length === 0 ? (
+        <h2 className="mb-4 text-lg font-semibold text-white">Patients</h2>
+        {patients.length === 0 ? (
           <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-8 text-center text-sm text-zinc-500">
-            No campaigns yet.{" "}
+            No patients yet.{" "}
             <Link href="/setup" className="text-emerald-400 hover:underline">
-              Create one
+              Register one
             </Link>
           </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {campaigns.map((c) => {
-              const campaignCalls = calls.filter(
-                (cl) => cl.campaign_id === c.id
+            {patients.map((p) => {
+              const patientCalls = calls.filter(
+                (cl) => cl.patient_id === p.id
               );
               return (
                 <div
-                  key={c.id}
+                  key={p.id}
                   className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-5"
                 >
-                  <h3 className="font-semibold text-white">{c.name}</h3>
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-white">{p.name}</h3>
+                    <StatusBadge status={p.status} />
+                  </div>
                   <p className="mt-1 text-xs text-zinc-500 line-clamp-2">
-                    {c.conversation_goal}
+                    {p.conversation_goal || p.primary_diagnosis || "No details"}
                   </p>
                   <div className="mt-3 flex items-center justify-between">
                     <span className="text-xs text-zinc-400">
-                      {campaignCalls.length} call
-                      {campaignCalls.length !== 1 ? "s" : ""}
+                      {patientCalls.length} call
+                      {patientCalls.length !== 1 ? "s" : ""}
                     </span>
                     <Link
-                      href={`/simulate/${c.id}`}
+                      href={`/simulate/${p.id}`}
                       className="text-xs font-medium text-emerald-400 hover:underline"
                     >
                       Simulate Call →
@@ -129,7 +132,7 @@ export default function Dashboard() {
         <h2 className="mb-4 text-lg font-semibold text-white">Recent Calls</h2>
         {calls.length === 0 ? (
           <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-8 text-center text-sm text-zinc-500">
-            No calls yet. Simulate a call from a campaign.
+            No calls yet. Simulate a call from a patient.
           </div>
         ) : (
           <div className="overflow-hidden rounded-lg border border-zinc-800">
@@ -220,5 +223,25 @@ function StatCard({
       </div>
       <p className="mt-2 text-2xl font-bold text-white">{value}</p>
     </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const styles: Record<string, string> = {
+    PENDING_REVIEW: "bg-yellow-900/50 text-yellow-300",
+    CONFIRMED: "bg-blue-900/50 text-blue-300",
+    ACTIVE: "bg-emerald-900/50 text-emerald-300",
+    COMPLETED: "bg-zinc-800 text-zinc-400",
+  };
+  const labels: Record<string, string> = {
+    PENDING_REVIEW: "Pending",
+    CONFIRMED: "Confirmed",
+    ACTIVE: "Active",
+    COMPLETED: "Completed",
+  };
+  return (
+    <span className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase ${styles[status] || styles.PENDING_REVIEW}`}>
+      {labels[status] || status}
+    </span>
   );
 }
