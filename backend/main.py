@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from auth import get_current_doctor, router as auth_router
 from claude import respond, process_transcript
@@ -25,6 +26,7 @@ from database import (
     Doctor,
     EscalationRecord,
     Patient,
+    SessionLocal,
     init_db,
     get_db,
 )
@@ -356,7 +358,7 @@ PREVIOUS CALL INTEGRATION:
 def _ensure_admin() -> Doctor:
     """서버 시작 시 기본 admin 계정이 없으면 생성하고 반환."""
     from auth import hash_password  # 순환 import 방지를 위해 지역 import
-    db = get_db()
+    db = SessionLocal()
     try:
         admin = db.query(Doctor).filter(Doctor.email == "admin@pulsecall.dev").first()
         if not admin:
@@ -545,7 +547,7 @@ SEED_PATIENTS = [
 
 def seed_example_data(admin_id: str) -> None:
     """Seed demo patients into the database (skip if already present)."""
-    db = get_db()
+    db = SessionLocal()
     try:
         for sp in SEED_PATIENTS:
             existing = db.query(Patient).filter(Patient.id == sp["id"]).first()
@@ -619,43 +621,37 @@ def read_root() -> dict[str, str]:
 @app.get("/patients")
 def list_patients(
     current_doctor: Doctor = Depends(get_current_doctor),
+    db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
-    db = get_db()
-    try:
-        q = db.query(Patient).order_by(Patient.created_at.desc())
-        # RBAC: admin sees all patients; doctors see only their own
-        if current_doctor.role != "admin":
-            q = q.filter(Patient.doctor_id == current_doctor.id)
-        return [_patient_to_dict(p) for p in q.all()]
-    finally:
-        db.close()
+    q = db.query(Patient).order_by(Patient.created_at.desc())
+    # RBAC: admin sees all patients; doctors see only their own
+    if current_doctor.role != "admin":
+        q = q.filter(Patient.doctor_id == current_doctor.id)
+    return [_patient_to_dict(p) for p in q.all()]
 
 
 @app.get("/patients/{patient_id}")
 def get_patient_detail(
     patient_id: str,
     current_doctor: Doctor = Depends(get_current_doctor),
+    db: Session = Depends(get_db),
 ):
-    db = get_db()
-    try:
-        patient = _get_patient(db, patient_id)
-        # RBAC: doctors can only access their own patients
-        if current_doctor.role != "admin" and patient.doctor_id != current_doctor.id:
-            raise HTTPException(status_code=403, detail="Access denied")
-        result = _patient_to_dict(patient)
-        # Include patient_data for backwards compat with frontend voice UI
-        result["patient_data"] = _patient_data_dict(patient)
-        return result
-    finally:
-        db.close()
+    patient = _get_patient(db, patient_id)
+    # RBAC: doctors can only access their own patients
+    if current_doctor.role != "admin" and patient.doctor_id != current_doctor.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    result = _patient_to_dict(patient)
+    # Include patient_data for backwards compat with frontend voice UI
+    result["patient_data"] = _patient_data_dict(patient)
+    return result
 
 
 @app.post("/patients")
 def create_patient(
     payload: PatientCreate,
     current_doctor: Doctor = Depends(get_current_doctor),
+    db: Session = Depends(get_db),
 ):
-    db = get_db()
     try:
         patient_id = f"pt_{uuid4().hex[:10]}"
         patient = Patient(
@@ -689,17 +685,15 @@ def create_patient(
     except Exception:
         db.rollback()
         raise
-    finally:
-        db.close()
 
 
 @app.patch("/patients/{patient_id}/confirm")
 def confirm_patient(
     patient_id: str,
     current_doctor: Doctor = Depends(get_current_doctor),
+    db: Session = Depends(get_db),
 ):
     """Doctor confirms a patient for active AI follow-up calls."""
-    db = get_db()
     try:
         patient = _get_patient(db, patient_id)
         if current_doctor.role != "admin" and patient.doctor_id != current_doctor.id:
@@ -710,8 +704,6 @@ def confirm_patient(
     except Exception:
         db.rollback()
         raise
-    finally:
-        db.close()
 
 
 # =====================================================================
@@ -722,8 +714,8 @@ def confirm_patient(
 def create_conversation(
     patient_id: str,
     _: Doctor = Depends(get_current_doctor),
+    db: Session = Depends(get_db),
 ):
-    db = get_db()
     try:
         _get_patient(db, patient_id)  # validate patient exists
         conversation_id = str(uuid4())
@@ -754,8 +746,6 @@ def create_conversation(
     except Exception:
         db.rollback()
         raise
-    finally:
-        db.close()
 
 
 @app.post("/patients/{patient_id}/{conversation_id}")
@@ -764,9 +754,9 @@ def get_response(
     conversation_id: str,
     message: str,
     _: Doctor = Depends(get_current_doctor),
+    db: Session = Depends(get_db),
 ):
     """Get a response from the LLM for a given conversation."""
-    db = get_db()
     try:
         conv = _get_conversation(db, conversation_id)
         if conv.patient_id != patient_id:
@@ -798,8 +788,6 @@ def get_response(
     except Exception:
         db.rollback()
         raise
-    finally:
-        db.close()
 
 
 @app.post("/patients/{patient_id}/{conversation_id}/end", response_model=EndCallOut)
@@ -807,8 +795,8 @@ def end_call(
     patient_id: str,
     conversation_id: str,
     _: Doctor = Depends(get_current_doctor),
+    db: Session = Depends(get_db),
 ) -> EndCallOut:
-    db = get_db()
     try:
         conv = _get_conversation(db, conversation_id)
         if conv.patient_id != patient_id:
@@ -886,28 +874,25 @@ def end_call(
     except Exception:
         db.rollback()
         raise
-    finally:
-        db.close()
 
 
 @app.get("/conversations")
-def list_conversations(_: Doctor = Depends(get_current_doctor)) -> list[dict[str, Any]]:
-    db = get_db()
-    try:
-        convs = db.query(ConversationRecord).order_by(ConversationRecord.started_at.desc()).all()
-        return [
-            {
-                "id": c.id,
-                "patient_id": c.patient_id,
-                "status": c.status,
-                "start_time": c.started_at.isoformat() if c.started_at else None,
-                "end_time": c.ended_at.isoformat() if c.ended_at else None,
-                "history": _json_loads(c.history),
-            }
-            for c in convs
-        ]
-    finally:
-        db.close()
+def list_conversations(
+    _: Doctor = Depends(get_current_doctor),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    convs = db.query(ConversationRecord).order_by(ConversationRecord.started_at.desc()).all()
+    return [
+        {
+            "id": c.id,
+            "patient_id": c.patient_id,
+            "status": c.status,
+            "start_time": c.started_at.isoformat() if c.started_at else None,
+            "end_time": c.ended_at.isoformat() if c.ended_at else None,
+            "history": _json_loads(c.history),
+        }
+        for c in convs
+    ]
 
 
 # =====================================================================
@@ -944,25 +929,22 @@ def _call_to_dict(r: DBCallRecord, db=None) -> dict[str, Any]:
 @app.get("/calls")
 def list_calls(
     _: Doctor = Depends(get_current_doctor),
+    db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
-    db = get_db()
-    try:
-        records = db.query(DBCallRecord).order_by(DBCallRecord.created_at.desc()).all()
-        return [_call_to_dict(r, db) for r in records]
-    finally:
-        db.close()
+    records = db.query(DBCallRecord).order_by(DBCallRecord.created_at.desc()).all()
+    return [_call_to_dict(r, db) for r in records]
 
 
 @app.get("/calls/{call_id}")
-def get_call_detail(call_id: str, _: Doctor = Depends(get_current_doctor)):
-    db = get_db()
-    try:
-        record = db.query(DBCallRecord).filter(DBCallRecord.id == call_id).first()
-        if not record:
-            raise HTTPException(status_code=404, detail="Call not found")
-        return _call_to_dict(record, db)
-    finally:
-        db.close()
+def get_call_detail(
+    call_id: str,
+    _: Doctor = Depends(get_current_doctor),
+    db: Session = Depends(get_db),
+):
+    record = db.query(DBCallRecord).filter(DBCallRecord.id == call_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Call not found")
+    return _call_to_dict(record, db)
 
 
 # =====================================================================
@@ -986,20 +968,20 @@ def _escalation_to_dict(e: EscalationRecord) -> dict[str, Any]:
 @app.get("/escalations")
 def list_escalations(
     _: Doctor = Depends(get_current_doctor),
+    db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
-    db = get_db()
-    try:
-        escalations = db.query(EscalationRecord).order_by(EscalationRecord.created_at.desc()).all()
-        priority_order = {"high": 0, "medium": 1, "low": 2}
-        escalations.sort(key=lambda e: priority_order.get(e.priority, 3))
-        return [_escalation_to_dict(e) for e in escalations]
-    finally:
-        db.close()
+    escalations = db.query(EscalationRecord).order_by(EscalationRecord.created_at.desc()).all()
+    priority_order = {"high": 0, "medium": 1, "low": 2}
+    escalations.sort(key=lambda e: priority_order.get(e.priority, 3))
+    return [_escalation_to_dict(e) for e in escalations]
 
 
 @app.patch("/escalations/{escalation_id}/acknowledge")
-def acknowledge_escalation(escalation_id: str, _: Doctor = Depends(get_current_doctor)):
-    db = get_db()
+def acknowledge_escalation(
+    escalation_id: str,
+    _: Doctor = Depends(get_current_doctor),
+    db: Session = Depends(get_db),
+):
     try:
         esc = db.query(EscalationRecord).filter(EscalationRecord.id == escalation_id).first()
         if not esc:
@@ -1013,8 +995,6 @@ def acknowledge_escalation(escalation_id: str, _: Doctor = Depends(get_current_d
     except Exception:
         db.rollback()
         raise
-    finally:
-        db.close()
 
 
 # =====================================================================
@@ -1022,18 +1002,18 @@ def acknowledge_escalation(escalation_id: str, _: Doctor = Depends(get_current_d
 # =====================================================================
 
 @app.get("/call-history/{patient_id}")
-def get_patient_call_history(patient_id: str, _: Doctor = Depends(get_current_doctor)):
-    db = get_db()
-    try:
-        records = (
-            db.query(DBCallRecord)
-            .filter(DBCallRecord.patient_id == patient_id)
-            .order_by(DBCallRecord.created_at.desc())
-            .all()
-        )
-        return [_call_to_dict(r, db) for r in records]
-    finally:
-        db.close()
+def get_patient_call_history(
+    patient_id: str,
+    _: Doctor = Depends(get_current_doctor),
+    db: Session = Depends(get_db),
+):
+    records = (
+        db.query(DBCallRecord)
+        .filter(DBCallRecord.patient_id == patient_id)
+        .order_by(DBCallRecord.created_at.desc())
+        .all()
+    )
+    return [_call_to_dict(r, db) for r in records]
 
 
 # =====================================================================
@@ -1041,11 +1021,13 @@ def get_patient_call_history(patient_id: str, _: Doctor = Depends(get_current_do
 # =====================================================================
 
 @app.post("/webhooks/smallest/post-call")
-async def webhook_post_call(payload: SmallestAIPostCallPayload):
+async def webhook_post_call(
+    payload: SmallestAIPostCallPayload,
+    db: Session = Depends(get_db),
+):
     """Handle post-conversation webhook from Smallest.ai."""
     logger.info("Post-call webhook received: call_id=%s user_id=%s status=%s", payload.call_id, payload.user_id, payload.status)
 
-    db = get_db()
     try:
         # Find the call record by smallest_call_id
         call_record = (
@@ -1167,16 +1149,16 @@ async def webhook_post_call(payload: SmallestAIPostCallPayload):
         logger.exception("Error processing post-call webhook")
         db.rollback()
         raise HTTPException(status_code=500, detail="Webhook processing failed")
-    finally:
-        db.close()
 
 
 @app.post("/webhooks/smallest/analytics")
-async def webhook_analytics(payload: SmallestAIAnalyticsPayload):
+async def webhook_analytics(
+    payload: SmallestAIAnalyticsPayload,
+    db: Session = Depends(get_db),
+):
     """Handle analytics-completed webhook from Smallest.ai."""
     logger.info("Analytics webhook received: call_id=%s user_id=%s", payload.call_id, payload.user_id)
 
-    db = get_db()
     try:
         call_record = (
             db.query(DBCallRecord)
@@ -1225,8 +1207,6 @@ async def webhook_analytics(payload: SmallestAIAnalyticsPayload):
         logger.exception("Error processing analytics webhook")
         db.rollback()
         raise HTTPException(status_code=500, detail="Analytics webhook processing failed")
-    finally:
-        db.close()
 
 
 # =====================================================================
@@ -1234,9 +1214,12 @@ async def webhook_analytics(payload: SmallestAIAnalyticsPayload):
 # =====================================================================
 
 @app.post("/calls/outbound")
-async def trigger_outbound_call(patient_id: str, _: Doctor = Depends(get_current_doctor)):
+async def trigger_outbound_call(
+    patient_id: str,
+    _: Doctor = Depends(get_current_doctor),
+    db: Session = Depends(get_db),
+):
     """Manually trigger an outbound call for a specific patient."""
-    db = get_db()
     try:
         patient = _get_patient(db, patient_id)
 
@@ -1272,8 +1255,6 @@ async def trigger_outbound_call(patient_id: str, _: Doctor = Depends(get_current
     except Exception:
         db.rollback()
         raise
-    finally:
-        db.close()
 
 
 # =====================================================================
@@ -1310,7 +1291,10 @@ class VoiceSummaryRequest(BaseModel):
 
 
 @app.post("/voice/chat")
-async def voice_chat(payload: VoiceChatRequest):
+async def voice_chat(
+    payload: VoiceChatRequest,
+    db: Session = Depends(get_db),
+):
     """LLM + TTS: get AI text response and synthesized audio."""
     if not OPENROUTER_API_KEY:
         raise HTTPException(status_code=500, detail="OPENROUTER_API_KEY not configured")
@@ -1322,91 +1306,90 @@ async def voice_chat(payload: VoiceChatRequest):
     if not lookup_id:
         raise HTTPException(status_code=400, detail="patient_id is required")
 
-    db = get_db()
+    patient = db.query(Patient).filter(Patient.id == lookup_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    if not payload.transcription and payload.trigger != "initial":
+        raise HTTPException(status_code=400, detail="No transcription provided")
+
+    system_prompt = _build_system_prompt(patient)
+    voice_id = patient.voice_id or "rachel"
+    # Release DB connection before slow external HTTP calls (OpenRouter + TTS)
+    db.close()
+
+    past_messages = payload.history or []
+    turn_number = len([m for m in past_messages if m.get("role") == "user"]) + 1
+
+    messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
+    messages.extend(past_messages)
+
+    if payload.trigger == "initial":
+        messages.append({
+            "role": "system",
+            "content": "The patient has picked up the phone. Start the conversation with STEP 1 immediately.",
+        })
+    else:
+        messages.append({
+            "role": "user",
+            "content": payload.transcription or "",
+        })
+        messages.append({
+            "role": "system",
+            "content": f"This is turn {turn_number}. Continue the flow naturally.",
+        })
+
+    or_headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://localhost:3000",
+        "X-Title": "PulseCall",
+    }
+    llm_payload = {
+        "model": VOICE_LLM_MODEL,
+        "max_tokens": 300,
+        "messages": messages,
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        llm_res = await client.post("https://openrouter.ai/api/v1/chat/completions", headers=or_headers, json=llm_payload)
+        if llm_res.status_code != 200:
+            logger.error("OpenRouter error: %s", llm_res.text)
+            raise HTTPException(status_code=llm_res.status_code, detail=llm_res.text)
+
+        reply = llm_res.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+
+    is_ending = "[END_CALL]" in reply
+    clean_reply = reply.replace("[END_CALL]", "").strip()
+    if not is_ending:
+        ending_patterns = re.compile(r"\b(goodbye|good bye|bye|take care|have a (good|great|nice) (day|evening|night|one))\b", re.IGNORECASE)
+        is_ending = bool(ending_patterns.search(clean_reply))
+
+    audio_base64 = None
     try:
-        patient = db.query(Patient).filter(Patient.id == lookup_id).first()
-        if not patient:
-            raise HTTPException(status_code=404, detail="Patient not found")
-
-        if not payload.transcription and payload.trigger != "initial":
-            raise HTTPException(status_code=400, detail="No transcription provided")
-
-        system_prompt = _build_system_prompt(patient)
-        past_messages = payload.history or []
-        turn_number = len([m for m in past_messages if m.get("role") == "user"]) + 1
-
-        messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
-        messages.extend(past_messages)
-
-        if payload.trigger == "initial":
-            messages.append({
-                "role": "system",
-                "content": "The patient has picked up the phone. Start the conversation with STEP 1 immediately.",
-            })
-        else:
-            messages.append({
-                "role": "user",
-                "content": payload.transcription or "",
-            })
-            messages.append({
-                "role": "system",
-                "content": f"This is turn {turn_number}. Continue the flow naturally.",
-            })
-
-        or_headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "http://localhost:3000",
-            "X-Title": "PulseCall",
-        }
-        llm_payload = {
-            "model": VOICE_LLM_MODEL,
-            "max_tokens": 300,
-            "messages": messages,
-        }
-
         async with httpx.AsyncClient(timeout=30.0) as client:
-            llm_res = await client.post("https://openrouter.ai/api/v1/chat/completions", headers=or_headers, json=llm_payload)
-            if llm_res.status_code != 200:
-                logger.error("OpenRouter error: %s", llm_res.text)
-                raise HTTPException(status_code=llm_res.status_code, detail=llm_res.text)
+            tts_res = await client.post(
+                "https://waves-api.smallest.ai/api/v1/lightning-v3.1/get_speech",
+                headers={
+                    "Authorization": f"Bearer {SMALLEST_AI_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "text": clean_reply,
+                    "voice_id": voice_id,
+                    "sample_rate": 24000,
+                    "speed": 1,
+                    "output_format": "mp3",
+                },
+            )
+            if tts_res.status_code == 200:
+                audio_base64 = base64.b64encode(tts_res.content).decode("utf-8")
+            else:
+                logger.error("TTS error: %s", tts_res.text)
+    except Exception as e:
+        logger.error("TTS request failed: %s", e)
 
-            reply = llm_res.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-
-        is_ending = "[END_CALL]" in reply
-        clean_reply = reply.replace("[END_CALL]", "").strip()
-        if not is_ending:
-            ending_patterns = re.compile(r"\b(goodbye|good bye|bye|take care|have a (good|great|nice) (day|evening|night|one))\b", re.IGNORECASE)
-            is_ending = bool(ending_patterns.search(clean_reply))
-
-        voice_id = patient.voice_id or "rachel"
-        audio_base64 = None
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                tts_res = await client.post(
-                    "https://waves-api.smallest.ai/api/v1/lightning-v3.1/get_speech",
-                    headers={
-                        "Authorization": f"Bearer {SMALLEST_AI_API_KEY}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "text": clean_reply,
-                        "voice_id": voice_id,
-                        "sample_rate": 24000,
-                        "speed": 1,
-                        "output_format": "mp3",
-                    },
-                )
-                if tts_res.status_code == 200:
-                    audio_base64 = base64.b64encode(tts_res.content).decode("utf-8")
-                else:
-                    logger.error("TTS error: %s", tts_res.text)
-        except Exception as e:
-            logger.error("TTS request failed: %s", e)
-
-        return {"reply": clean_reply, "audio": audio_base64, "isEnding": is_ending}
-    finally:
-        db.close()
+    return {"reply": clean_reply, "audio": audio_base64, "isEnding": is_ending}
 
 
 @app.post("/voice/transcribe")

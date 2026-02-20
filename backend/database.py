@@ -152,11 +152,10 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
 
 
-def get_db() -> Session:
-    """Yield a database session."""
+def get_db():
+    """FastAPI dependency: yield a database session and close it after the request."""
     db = SessionLocal()
     try:
-        return db
-    except Exception:
+        yield db
+    finally:
         db.close()
-        raise
