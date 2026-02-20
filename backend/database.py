@@ -133,6 +133,20 @@ class EscalationRecord(Base):
     acknowledged_at = Column(DateTime, nullable=True)
 
 
+class Doctor(Base):
+    """Authenticated doctor / admin account."""
+
+    __tablename__ = "doctors"
+
+    id = Column(String, primary_key=True)                            # "doc_xxxx"
+    email = Column(String, unique=True, nullable=False, index=True)
+    password_hash = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    specialty = Column(String, nullable=True)
+    role = Column(String, nullable=False, default="doctor")          # "doctor" | "admin"
+    created_at = Column(DateTime, default=_utcnow)
+
+
 def init_db() -> None:
     """Create all tables if they don't exist."""
     Base.metadata.create_all(bind=engine)

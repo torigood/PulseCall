@@ -17,9 +17,9 @@ API_KEY = os.getenv("OPENROUTER_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
 if not API_KEY:
     raise ValueError("Neither OPENROUTER_API_KEY nor ANTHROPIC_API_KEY is set in .env file.")
 
-# OpenRouter models
-RESPONSE_MODEL = "openai/gpt-oss-20b:free" # openai/gpt-4o-mini
-ANALYSIS_MODEL = "meta-llama/llama-3.3-70b-instruct:free " # anthropic/claude-3.5-sonnet
+# OpenRouter models (configurable via environment variables)
+RESPONSE_MODEL = os.getenv("VOICE_LLM_MODEL", "openai/gpt-oss-20b:free")
+ANALYSIS_MODEL = os.getenv("ANALYSIS_LLM_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
 
 BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 

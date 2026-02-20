@@ -4,10 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Activity,
-  LayoutDashboard,
-  Plus,
   AlertTriangle,
+  LayoutDashboard,
+  LogOut,
+  Plus,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { clearToken } from "@/lib/api";
 
 const links = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -17,6 +20,12 @@ const links = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+
+  function handleLogout() {
+    clearToken();
+    router.replace("/login");
+  }
 
   return (
     <aside className="flex w-56 flex-col border-r border-zinc-800 bg-zinc-950 px-3 py-6">
@@ -47,6 +56,16 @@ export function Sidebar() {
           );
         })}
       </nav>
+
+      <div className="mt-auto">
+        <button
+          onClick={handleLogout}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-zinc-400 transition-colors hover:bg-zinc-900 hover:text-white"
+        >
+          <LogOut className="h-4 w-4" />
+          Sign out
+        </button>
+      </div>
     </aside>
   );
 }

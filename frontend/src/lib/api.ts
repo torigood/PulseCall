@@ -1,5 +1,25 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+// ---------------------------------------------------------------------------
+// Token management (localStorage)
+// ---------------------------------------------------------------------------
+export function saveToken(token: string): void {
+  if (typeof window !== "undefined") localStorage.setItem("auth_token", token);
+}
+
+export function loadToken(): string | null {
+  return typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
+}
+
+export function clearToken(): void {
+  if (typeof window !== "undefined") localStorage.removeItem("auth_token");
+}
+
+function getAuthHeaders(): Record<string, string> {
+  const token = loadToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export interface Patient {
   id: string;
   name: string;
@@ -90,7 +110,11 @@ export interface Escalation {
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+      ...(options?.headers as Record<string, string> | undefined),
+    },
     ...options,
   });
   if (!res.ok) {
@@ -99,6 +123,45 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
   return res.json();
 }
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+export interface DoctorCreate {
+  email: string;
+  password: string;
+  name: string;
+  specialty?: string;
+}
+
+export interface DoctorResponse {
+  id: string;
+  email: string;
+  name: string;
+  specialty?: string;
+  role: string;
+  created_at: string;
+}
+
+export interface TokenResponse {
+  access_token: string;
+  token_type: string;
+}
+
+export const login = (email: string, password: string): Promise<TokenResponse> =>
+  request<TokenResponse>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+
+export const register = (data: DoctorCreate): Promise<DoctorResponse> =>
+  request<DoctorResponse>("/auth/register", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+
+export const getMe = (): Promise<DoctorResponse> =>
+  request<DoctorResponse>("/auth/me");
 
 // Patients
 export const createPatient = (data: PatientCreate) =>

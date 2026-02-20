@@ -7,6 +7,11 @@ let mockPathname = "/";
 
 jest.mock("next/navigation", () => ({
   usePathname: () => mockPathname,
+  useRouter: () => ({ replace: jest.fn() }),
+}));
+
+jest.mock("@/lib/api", () => ({
+  clearToken: jest.fn(),
 }));
 
 jest.mock("next/link", () => {

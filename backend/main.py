@@ -13,14 +13,16 @@ from uuid import uuid4
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from auth import get_current_doctor, router as auth_router
 from claude import respond, process_transcript
 from database import (
     CallRecord as DBCallRecord,
     ConversationRecord,
+    Doctor,
     EscalationRecord,
     Patient,
     init_db,
@@ -45,7 +47,7 @@ load_dotenv(dotenv_path=env_path)
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 SMALLEST_AI_API_KEY = os.getenv("SMALLEST_AI_API_KEY", "")
-VOICE_LLM_MODEL = "openai/gpt-oss-20b:free"  # openai/gpt-4o-mini
+VOICE_LLM_MODEL = os.getenv("VOICE_LLM_MODEL", "openai/gpt-oss-20b:free")
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -54,7 +56,8 @@ logging.basicConfig(level=logging.INFO)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    seed_example_data()
+    admin = _ensure_admin()
+    seed_example_data(admin.id)
     start_scheduler()
     yield
     stop_scheduler()
@@ -64,6 +67,7 @@ app = FastAPI(title="PulseCall API", version="0.2.0", lifespan=lifespan)
 
 origins = [
     "http://localhost:3000",
+    "http://localhost:3001",
     "https://pulsecall.onrender.com",
 ]
 
@@ -74,6 +78,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +350,37 @@ PREVIOUS CALL INTEGRATION:
 
 
 # ---------------------------------------------------------------------------
+# Admin bootstrap
+# ---------------------------------------------------------------------------
+
+def _ensure_admin() -> Doctor:
+    """서버 시작 시 기본 admin 계정이 없으면 생성하고 반환."""
+    from auth import hash_password  # 순환 import 방지를 위해 지역 import
+    db = get_db()
+    try:
+        admin = db.query(Doctor).filter(Doctor.email == "admin@pulsecall.dev").first()
+        if not admin:
+            admin = Doctor(
+                id="doc_admin_000",
+                email="admin@pulsecall.dev",
+                password_hash=hash_password("admin1234"),
+                name="PulseCall Admin",
+                role="admin",
+            )
+            db.add(admin)
+            db.commit()
+            db.refresh(admin)
+            logger.info("Default admin account created: admin@pulsecall.dev / admin1234")
+        return admin
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to create admin account")
+        raise
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
 # Seed data
 # ---------------------------------------------------------------------------
 
@@ -506,13 +543,16 @@ SEED_PATIENTS = [
 ]
 
 
-def seed_example_data() -> None:
+def seed_example_data(admin_id: str) -> None:
     """Seed demo patients into the database (skip if already present)."""
     db = get_db()
     try:
         for sp in SEED_PATIENTS:
             existing = db.query(Patient).filter(Patient.id == sp["id"]).first()
             if existing:
+                # 기존 시드 환자의 doctor_id가 None이면 admin으로 업데이트
+                if existing.doctor_id is None:
+                    existing.doctor_id = admin_id
                 continue
 
             patient = Patient(
@@ -537,6 +577,7 @@ def seed_example_data() -> None:
                 system_prompt="Be concise, empathetic, and clear. Ask one question at a time.",
                 escalation_keywords=json.dumps(sp.get("escalation_keywords", [])),
                 voice_id=sp.get("voice_id", "rachel"),
+                doctor_id=admin_id,
             )
             db.add(patient)
 
@@ -576,20 +617,31 @@ def read_root() -> dict[str, str]:
 
 
 @app.get("/patients")
-def list_patients() -> list[dict[str, Any]]:
+def list_patients(
+    current_doctor: Doctor = Depends(get_current_doctor),
+) -> list[dict[str, Any]]:
     db = get_db()
     try:
-        patients = db.query(Patient).order_by(Patient.created_at.desc()).all()
-        return [_patient_to_dict(p) for p in patients]
+        q = db.query(Patient).order_by(Patient.created_at.desc())
+        # RBAC: admin sees all patients; doctors see only their own
+        if current_doctor.role != "admin":
+            q = q.filter(Patient.doctor_id == current_doctor.id)
+        return [_patient_to_dict(p) for p in q.all()]
     finally:
         db.close()
 
 
 @app.get("/patients/{patient_id}")
-def get_patient_detail(patient_id: str):
+def get_patient_detail(
+    patient_id: str,
+    current_doctor: Doctor = Depends(get_current_doctor),
+):
     db = get_db()
     try:
         patient = _get_patient(db, patient_id)
+        # RBAC: doctors can only access their own patients
+        if current_doctor.role != "admin" and patient.doctor_id != current_doctor.id:
+            raise HTTPException(status_code=403, detail="Access denied")
         result = _patient_to_dict(patient)
         # Include patient_data for backwards compat with frontend voice UI
         result["patient_data"] = _patient_data_dict(patient)
@@ -599,7 +651,10 @@ def get_patient_detail(patient_id: str):
 
 
 @app.post("/patients")
-def create_patient(payload: PatientCreate):
+def create_patient(
+    payload: PatientCreate,
+    current_doctor: Doctor = Depends(get_current_doctor),
+):
     db = get_db()
     try:
         patient_id = f"pt_{uuid4().hex[:10]}"
@@ -626,6 +681,7 @@ def create_patient(payload: PatientCreate):
             system_prompt=payload.system_prompt,
             escalation_keywords=json.dumps(payload.escalation_keywords or []),
             voice_id=payload.voice_id,
+            doctor_id=current_doctor.id,  # auto-assign to the registering doctor
         )
         db.add(patient)
         db.commit()
@@ -638,11 +694,16 @@ def create_patient(payload: PatientCreate):
 
 
 @app.patch("/patients/{patient_id}/confirm")
-def confirm_patient(patient_id: str):
+def confirm_patient(
+    patient_id: str,
+    current_doctor: Doctor = Depends(get_current_doctor),
+):
     """Doctor confirms a patient for active AI follow-up calls."""
     db = get_db()
     try:
         patient = _get_patient(db, patient_id)
+        if current_doctor.role != "admin" and patient.doctor_id != current_doctor.id:
+            raise HTTPException(status_code=403, detail="Access denied")
         patient.status = PatientStatus.CONFIRMED
         db.commit()
         return _patient_to_dict(patient)
@@ -658,7 +719,10 @@ def confirm_patient(patient_id: str):
 # =====================================================================
 
 @app.post("/patients/conversations/create")
-def create_conversation(patient_id: str):
+def create_conversation(
+    patient_id: str,
+    _: Doctor = Depends(get_current_doctor),
+):
     db = get_db()
     try:
         _get_patient(db, patient_id)  # validate patient exists
@@ -695,7 +759,12 @@ def create_conversation(patient_id: str):
 
 
 @app.post("/patients/{patient_id}/{conversation_id}")
-def get_response(patient_id: str, conversation_id: str, message: str):
+def get_response(
+    patient_id: str,
+    conversation_id: str,
+    message: str,
+    _: Doctor = Depends(get_current_doctor),
+):
     """Get a response from the LLM for a given conversation."""
     db = get_db()
     try:
@@ -734,7 +803,11 @@ def get_response(patient_id: str, conversation_id: str, message: str):
 
 
 @app.post("/patients/{patient_id}/{conversation_id}/end", response_model=EndCallOut)
-def end_call(patient_id: str, conversation_id: str) -> EndCallOut:
+def end_call(
+    patient_id: str,
+    conversation_id: str,
+    _: Doctor = Depends(get_current_doctor),
+) -> EndCallOut:
     db = get_db()
     try:
         conv = _get_conversation(db, conversation_id)
@@ -818,7 +891,7 @@ def end_call(patient_id: str, conversation_id: str) -> EndCallOut:
 
 
 @app.get("/conversations")
-def list_conversations() -> list[dict[str, Any]]:
+def list_conversations(_: Doctor = Depends(get_current_doctor)) -> list[dict[str, Any]]:
     db = get_db()
     try:
         convs = db.query(ConversationRecord).order_by(ConversationRecord.started_at.desc()).all()
@@ -841,7 +914,16 @@ def list_conversations() -> list[dict[str, Any]]:
 # Calls
 # =====================================================================
 
-def _call_to_dict(r: DBCallRecord) -> dict[str, Any]:
+def _call_to_dict(r: DBCallRecord, db=None) -> dict[str, Any]:
+    escalation_id = None
+    if db is not None:
+        esc = (
+            db.query(EscalationRecord)
+            .filter(EscalationRecord.call_id == r.id)
+            .first()
+        )
+        escalation_id = esc.id if esc else None
+
     return {
         "id": r.id,
         "call_id": r.id,
@@ -855,28 +937,30 @@ def _call_to_dict(r: DBCallRecord) -> dict[str, Any]:
         "sentiment_score": r.sentiment_score or 3,
         "detected_flags": _json_loads(r.detected_flags),
         "recommended_action": r.recommended_action or "",
-        "escalation_id": r.escalation_reason,  # simplified
+        "escalation_id": escalation_id,
     }
 
 
 @app.get("/calls")
-def list_calls() -> list[dict[str, Any]]:
+def list_calls(
+    _: Doctor = Depends(get_current_doctor),
+) -> list[dict[str, Any]]:
     db = get_db()
     try:
         records = db.query(DBCallRecord).order_by(DBCallRecord.created_at.desc()).all()
-        return [_call_to_dict(r) for r in records]
+        return [_call_to_dict(r, db) for r in records]
     finally:
         db.close()
 
 
 @app.get("/calls/{call_id}")
-def get_call_detail(call_id: str):
+def get_call_detail(call_id: str, _: Doctor = Depends(get_current_doctor)):
     db = get_db()
     try:
         record = db.query(DBCallRecord).filter(DBCallRecord.id == call_id).first()
         if not record:
             raise HTTPException(status_code=404, detail="Call not found")
-        return _call_to_dict(record)
+        return _call_to_dict(record, db)
     finally:
         db.close()
 
@@ -900,7 +984,9 @@ def _escalation_to_dict(e: EscalationRecord) -> dict[str, Any]:
 
 
 @app.get("/escalations")
-def list_escalations() -> list[dict[str, Any]]:
+def list_escalations(
+    _: Doctor = Depends(get_current_doctor),
+) -> list[dict[str, Any]]:
     db = get_db()
     try:
         escalations = db.query(EscalationRecord).order_by(EscalationRecord.created_at.desc()).all()
@@ -912,7 +998,7 @@ def list_escalations() -> list[dict[str, Any]]:
 
 
 @app.patch("/escalations/{escalation_id}/acknowledge")
-def acknowledge_escalation(escalation_id: str):
+def acknowledge_escalation(escalation_id: str, _: Doctor = Depends(get_current_doctor)):
     db = get_db()
     try:
         esc = db.query(EscalationRecord).filter(EscalationRecord.id == escalation_id).first()
@@ -936,7 +1022,7 @@ def acknowledge_escalation(escalation_id: str):
 # =====================================================================
 
 @app.get("/call-history/{patient_id}")
-def get_patient_call_history(patient_id: str):
+def get_patient_call_history(patient_id: str, _: Doctor = Depends(get_current_doctor)):
     db = get_db()
     try:
         records = (
@@ -945,7 +1031,7 @@ def get_patient_call_history(patient_id: str):
             .order_by(DBCallRecord.created_at.desc())
             .all()
         )
-        return [_call_to_dict(r) for r in records]
+        return [_call_to_dict(r, db) for r in records]
     finally:
         db.close()
 
@@ -1148,7 +1234,7 @@ async def webhook_analytics(payload: SmallestAIAnalyticsPayload):
 # =====================================================================
 
 @app.post("/calls/outbound")
-async def trigger_outbound_call(patient_id: str):
+async def trigger_outbound_call(patient_id: str, _: Doctor = Depends(get_current_doctor)):
     """Manually trigger an outbound call for a specific patient."""
     db = get_db()
     try:
